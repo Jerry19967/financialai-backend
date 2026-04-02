@@ -1,10 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Create app
+# ===============================
+# CREATE APP (MUST BE FIRST)
+# ===============================
 app = FastAPI()
 
-# Enable CORS (important for frontend)
+# ===============================
+# ENABLE CORS (FOR FRONTEND)
+# ===============================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,30 +17,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Root endpoint
+# ===============================
+# ROOT API (TEST)
+# ===============================
 @app.get("/")
 def home():
     return {"message": "FinancialAI backend is running 🚀"}
 
 
-# Financial Health API
+# ===============================
+# FINANCIAL HEALTH API
+# ===============================
 @app.post("/financial-health")
 def financial_health(data: dict):
     try:
+        # Get values safely
         income = float(data.get("income", 0))
         expenses = float(data.get("expenses", 0))
         savings = float(data.get("savings", 0))
         emi = float(data.get("emi", 0))
 
+        # Validate
         if income <= 0:
             return {"error": "Income must be greater than zero"}
 
+        # Ratios
         savings_ratio = savings / income
         expense_ratio = expenses / income
         debt_ratio = emi / income
 
         score = 0
         insights = []
+
+        # ===============================
+        # SCORING LOGIC
+        # ===============================
 
         # Savings (25)
         if savings_ratio >= 0.2:
@@ -59,7 +74,7 @@ def financial_health(data: dict):
             score += 10
             insights.append("Reduce EMI burden")
 
-        # Emergency fund (15)
+        # Emergency Fund (15)
         if savings >= expenses * 6:
             score += 15
         else:
@@ -69,7 +84,15 @@ def financial_health(data: dict):
         # Investment (20 placeholder)
         score += 10
 
-        category = "Healthy" if score > 70 else "Moderate" if score > 40 else "Risky"
+        # ===============================
+        # CATEGORY
+        # ===============================
+        if score > 70:
+            category = "Healthy"
+        elif score > 40:
+            category = "Moderate"
+        else:
+            category = "Risky"
 
         return {
             "score": int(score),
