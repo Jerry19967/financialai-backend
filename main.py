@@ -61,18 +61,17 @@ def financial_health(data: dict):
 
 @app.post("/api/analyze")
 async def analyze(request: Request):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
     body = await request.json()
+    prompt = body["messages"][0]["content"]
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            json=body,
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
         )
-        return response.json()
+        data = response.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        return {"content": [{"text": text}]}
