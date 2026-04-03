@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import httpx
 import os
 
@@ -8,7 +9,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -59,6 +60,17 @@ def financial_health(data: dict):
         category = "Risky"
     return {"score": int(score), "category": category, "insights": insights}
 
+@app.options("/api/analyze")
+async def analyze_options():
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+    )
+
 @app.post("/api/analyze")
 async def analyze(request: Request):
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -74,4 +86,11 @@ async def analyze(request: Request):
         )
         data = response.json()
         text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return {"content": [{"text": text}]}
+        return JSONResponse(
+            content={"content": [{"text": text}]},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            }
+        )
