@@ -8,11 +8,9 @@ from collections import defaultdict
 
 app = FastAPI()
 
-# ─── CORS — only your Vercel domain can call this ─────────────────────────────
 ALLOWED_ORIGINS = [
     "https://financialai-frontend-lime.vercel.app",
     "https://financialai-frontend.vercel.app",
-    # Add more Vercel preview URLs if needed
 ]
 
 app.add_middleware(
@@ -23,16 +21,32 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-# ─── Simple in-memory rate limiter ────────────────────────────────────────────
-# Max 10 requests per IP per minute on /api/analyze
-# Max 30 requests per IP per minute on /financial-health
+# ─── System prompt ────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are FinHealth AI, an expert Indian personal finance advisor built into the FinHealth AI platform.
+
+Your expertise covers:
+- Mutual funds, SIPs, index funds, stocks, PPF, NPS, FDs
+- Indian tax laws: Section 80C, 80D, HRA, home loan deductions, old vs new regime
+- Insurance: term plans, health insurance, ULIP analysis, IRR calculation
+- Loans: home loans, personal loans, EMI calculations, prepayment strategies
+- Financial health: savings rate, emergency fund, debt management
+- Goal planning: retirement corpus, child education, home purchase
+
+Your style:
+- Be specific and actionable — give actual numbers, not vague advice
+- Use Indian context — rupees (₹), Indian regulations, Indian market instruments
+- Be concise but thorough — use bullet points when listing multiple points
+- Be friendly and conversational, like a trusted financial advisor
+- Always mention if something needs professional consultation for legal/tax matters
+
+Always end responses with a one-line disclaimer: "📌 This is informational only, not personalized financial advice."
+"""
+
 rate_store: dict = defaultdict(list)
 
 def is_rate_limited(ip: str, limit: int, window: int = 60) -> bool:
     now = time.time()
-    timestamps = rate_store[ip]
-    # Remove old timestamps outside the window
-    rate_store[ip] = [t for t in timestamps if now - t < window]
+    rate_store[ip] = [t for t in rate_store[ip] if now - t < window]
     if len(rate_store[ip]) >= limit:
         return True
     rate_store[ip].append(now)
@@ -44,20 +58,14 @@ def get_client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
-# ─── Input sanitization ───────────────────────────────────────────────────────
-def sanitize_prompt(prompt: str) -> str:
-    if not isinstance(prompt, str):
+def sanitize_message(content: str) -> str:
+    if not isinstance(content, str):
         return ""
-    # Trim and limit length — prevents prompt injection & oversized requests
-    prompt = prompt.strip()[:2000]
-    return prompt
-
-# ─── Routes ───────────────────────────────────────────────────────────────────
+    return content.strip()[:2000]
 
 @app.get("/")
 def home():
     return {"message": "FinancialAI backend is running 🚀"}
-
 
 @app.post("/financial-health")
 async def financial_health(request: Request):
@@ -81,45 +89,29 @@ async def financial_health(request: Request):
     if income <= 0:
         return {"error": "Income must be greater than zero"}
 
-    # Sanity caps — prevents absurd inputs
     if any(v > 1_000_000_000 for v in [income, expenses, savings, emi]):
         raise HTTPException(status_code=400, detail="Values exceed allowed range")
 
     savings_ratio = savings  / income
     expense_ratio = expenses / income
     debt_ratio    = emi      / income
-
     score    = 0
     insights = []
 
-    if savings_ratio >= 0.2:
-        score += 25
-    else:
-        score += 10
-        insights.append("Increase savings to at least 20% of income")
+    if savings_ratio >= 0.2: score += 25
+    else: score += 10; insights.append("Increase savings to at least 20% of income")
 
-    if expense_ratio <= 0.5:
-        score += 20
-    else:
-        score += 10
-        insights.append("Reduce expenses below 50%")
+    if expense_ratio <= 0.5: score += 20
+    else: score += 10; insights.append("Reduce expenses below 50%")
 
-    if debt_ratio <= 0.3:
-        score += 20
-    else:
-        score += 10
-        insights.append("Reduce EMI burden")
+    if debt_ratio <= 0.3: score += 20
+    else: score += 10; insights.append("Reduce EMI burden")
 
-    if savings >= expenses * 6:
-        score += 15
-    else:
-        score += 5
-        insights.append("Build 6-month emergency fund")
+    if savings >= expenses * 6: score += 15
+    else: score += 5; insights.append("Build 6-month emergency fund")
 
     score += 10
-
     category = "Healthy" if score > 70 else "Moderate" if score > 40 else "Risky"
-
     return {"score": int(score), "category": category, "insights": insights}
 
 
@@ -130,7 +122,6 @@ async def analyze_options():
 
 @app.post("/api/analyze")
 async def analyze(request: Request):
-    # Rate limit: 10 AI calls per IP per minute
     ip = get_client_ip(request)
     if is_rate_limited(ip, limit=10, window=60):
         return JSONResponse(
@@ -147,11 +138,21 @@ async def analyze(request: Request):
     except Exception:
         return JSONResponse(content={"error": "Invalid request body"}, status_code=400)
 
-    raw_prompt = body.get("messages", [{}])[0].get("content", "")
-    prompt = sanitize_prompt(raw_prompt)
+    # ── Get full conversation history from frontend ──
+    raw_messages = body.get("messages", [])
+    if not raw_messages:
+        return JSONResponse(content={"error": "Empty messages"}, status_code=400)
 
-    if not prompt:
-        return JSONResponse(content={"error": "Empty prompt"}, status_code=400)
+    # Sanitize each message and keep role + content
+    sanitized_messages = []
+    for msg in raw_messages:
+        role = msg.get("role", "user")
+        content = sanitize_message(msg.get("content", ""))
+        if role in ("user", "assistant") and content:
+            sanitized_messages.append({"role": role, "content": content})
+
+    if not sanitized_messages:
+        return JSONResponse(content={"error": "No valid messages"}, status_code=400)
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -163,8 +164,12 @@ async def analyze(request: Request):
                 },
                 json={
                     "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1024,  # cap response size
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        *sanitized_messages,
+                    ],
+                    "max_tokens": 1024,
+                    "temperature": 0.7,
                 },
             )
 
