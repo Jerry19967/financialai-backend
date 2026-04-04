@@ -388,7 +388,7 @@ async def analyze_options():
 @app.post("/api/analyze")
 async def analyze(request: Request):
     ip = get_client_ip(request)
-    if is_rate_limited(ip, limit=10, window=60):
+    if is_rate_limited(ip, limit=20, window=60):
         return JSONResponse(
             content={"error": "Too many requests. Please wait a moment and try again."},
             status_code=429,
